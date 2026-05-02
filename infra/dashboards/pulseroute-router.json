@@ -1,0 +1,26 @@
+{
+  "title": "PulseRoute — Router",
+  "uid": "pulseroute-router",
+  "schemaVersion": 39,
+  "version": 1,
+  "tags": ["pulseroute"],
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Routing decisions per (provider, model)",
+      "targets": [
+        {"expr": "sum by (provider, model) (rate(provider_requests_total[5m]))", "legendFormat": "{{provider}}/{{model}}"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+    },
+    {
+      "type": "stat",
+      "title": "Active circuit-breaker states",
+      "targets": [
+        {"expr": "sum by (provider, model) (circuit_breaker_state)", "legendFormat": "{{provider}}/{{model}}"}
+      ],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+    }
+  ]
+}

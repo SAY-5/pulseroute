@@ -1,0 +1,33 @@
+{
+  "title": "PulseRoute — Providers",
+  "uid": "pulseroute-providers",
+  "schemaVersion": 39,
+  "version": 1,
+  "tags": ["pulseroute"],
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Upstream latency P95 per (provider, model)",
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum by (le, provider, model) (rate(provider_upstream_latency_seconds_bucket[5m])))", "legendFormat": "{{provider}}/{{model}}"}
+      ],
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0}
+    },
+    {
+      "type": "timeseries",
+      "title": "Provider request volume",
+      "targets": [
+        {"expr": "sum by (provider, model) (rate(provider_requests_total[5m]))", "legendFormat": "{{provider}}/{{model}}"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+    },
+    {
+      "type": "timeseries",
+      "title": "Provider errors by code",
+      "targets": [
+        {"expr": "sum by (provider, code) (rate(provider_error_total[5m]))", "legendFormat": "{{provider}}/{{code}}"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+    }
+  ]
+}

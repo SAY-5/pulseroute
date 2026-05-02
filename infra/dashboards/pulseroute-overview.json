@@ -1,0 +1,44 @@
+{
+  "title": "PulseRoute — Overview",
+  "uid": "pulseroute-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "tags": ["pulseroute"],
+  "timezone": "browser",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Gateway added latency (P50/P95/P99)",
+      "targets": [
+        {"expr": "histogram_quantile(0.5, sum by (le) (rate(gateway_added_latency_seconds_bucket[5m])))", "legendFormat": "p50"},
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(gateway_added_latency_seconds_bucket[5m])))", "legendFormat": "p95"},
+        {"expr": "histogram_quantile(0.99, sum by (le) (rate(gateway_added_latency_seconds_bucket[5m])))", "legendFormat": "p99"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+    },
+    {
+      "type": "timeseries",
+      "title": "Cache hit rate",
+      "targets": [
+        {"expr": "sum by (tenant_id) (rate(cache_lookups_total{outcome=\"hit\"}[5m])) / sum by (tenant_id) (rate(cache_lookups_total[5m]))", "legendFormat": "{{tenant_id}}"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+    },
+    {
+      "type": "timeseries",
+      "title": "Cumulative cost USD per tenant",
+      "targets": [
+        {"expr": "sum by (tenant_id) (cost_usd_total)", "legendFormat": "{{tenant_id}}"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+    },
+    {
+      "type": "timeseries",
+      "title": "Provider error rate",
+      "targets": [
+        {"expr": "sum by (provider, code) (rate(provider_error_total[5m]))", "legendFormat": "{{provider}}/{{code}}"}
+      ],
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+    }
+  ]
+}
