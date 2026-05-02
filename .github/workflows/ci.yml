@@ -73,13 +73,15 @@ jobs:
           --health-cmd "pg_isready -U pulseroute"
           --health-interval 5s --health-timeout 3s --health-retries 10
       clickhouse:
-        image: clickhouse/clickhouse-server:24-alpine
+        image: clickhouse/clickhouse-server:24
         env:
           CLICKHOUSE_DB: pulseroute
+          CLICKHOUSE_SKIP_USER_SETUP: "1"
         ports: ["8123:8123"]
         options: >-
-          --health-cmd "wget -qO- http://localhost:8123/ping || exit 1"
-          --health-interval 5s --health-timeout 3s --health-retries 20
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s --health-timeout 3s --health-retries 30
+          --health-start-period 20s
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
