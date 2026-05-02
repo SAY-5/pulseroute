@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.tox/
+
+# Virtual envs
+.venv/
+venv/
+env/
+.python-version
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Local data
+*.sqlite
+*.db
+*.log
+data/
+.env
+.env.local
+
+# Build artifacts
+*.tar.gz
+*.whl
+
+# Node (admin dashboard placeholder)
+node_modules/
+.next/
+
+# Generated
+clients/generated/
