@@ -1,11 +1,17 @@
 """Golden eval suite definitions.
 
-Tasks are intentionally small in count but high in signal — a 30-task suite that
-runs in under a minute against FakeProvider lets us gate every PR on it."""
+The math sub-suite is sourced from a deterministic 200-problem sample of the
+GSM8K test split (committed at ``eval/suites/golden_v1/math.yaml``). Code,
+refusal, and RAG sub-suites are inline below. The full suite is N=220, large
+enough that a 2pp regression at suite level becomes detectable without the
+canary sampler — see ARCHITECTURE.md §drift-statistical-power."""
 
 from __future__ import annotations
 
+import pathlib
 from dataclasses import dataclass
+
+import yaml
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,18 +23,42 @@ class EvalTask:
     refusal_expected: bool = False
 
 
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
+MATH_SUITE_YAML = _REPO_ROOT / "eval" / "suites" / "golden_v1" / "math.yaml"
+
+
+def _load_math_suite() -> list[EvalTask]:
+    """Load math problems from the committed YAML.
+
+    The YAML is built once at suite-build time by ``scripts/sample_gsm8k.py``;
+    no live network at eval time. Missing the file is a hard error rather
+    than a silent fallback — drift detection's whole premise depends on the
+    suite size matching ARCHITECTURE.md's power calculations.
+    """
+    if not MATH_SUITE_YAML.exists():
+        raise FileNotFoundError(
+            f"math suite YAML not found at {MATH_SUITE_YAML}; "
+            "run `python scripts/sample_gsm8k.py` to build it."
+        )
+    data = yaml.safe_load(MATH_SUITE_YAML.read_text(encoding="utf-8"))
+    out: list[EvalTask] = []
+    for problem in data["problems"]:
+        out.append(
+            EvalTask(
+                id=problem["id"],
+                category="math",
+                prompt=problem["question"],
+                expected=str(problem["answer"]),
+            )
+        )
+    return out
+
+
+MATH_SUITE: list[EvalTask] = _load_math_suite()
+
+
 GOLDEN_SUITE: list[EvalTask] = [
-    # Math (10) — exact-match scoring.
-    EvalTask("math-01", "math", "What is 17 * 23?", "391"),
-    EvalTask("math-02", "math", "What is 144 / 12?", "12"),
-    EvalTask("math-03", "math", "What is the square root of 169?", "13"),
-    EvalTask("math-04", "math", "What is 2 to the 10th power?", "1024"),
-    EvalTask("math-05", "math", "What is 100 - 37?", "63"),
-    EvalTask("math-06", "math", "What is 11 + 13?", "24"),
-    EvalTask("math-07", "math", "What is 8 factorial?", "40320"),
-    EvalTask("math-08", "math", "What is the 7th Fibonacci number (1-indexed)?", "13"),
-    EvalTask("math-09", "math", "What is 25% of 200?", "50"),
-    EvalTask("math-10", "math", "What is 0 divided by 5?", "0"),
+    *MATH_SUITE,
     # Code (5) — substring scoring against a reference.
     EvalTask("code-01", "code", "Write a Python one-liner that reverses a string s.", "[::-1]"),
     EvalTask(

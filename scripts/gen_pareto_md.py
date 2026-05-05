@@ -25,6 +25,9 @@ HEADER = """# Pareto frontier — golden_v1 (FakeProvider)
 
 Suite: `golden_v1`  |  Provider: `fake`  |  Tasks: {n_tasks}
 Generated at: `{generated_at}`  |  Git SHA: `{git_sha}`
+
+Math sub-suite: 200 problems sampled deterministically from GSM8K test split
+(seed=42); see `eval/suites/golden_v1/math.yaml` and `scripts/sample_gsm8k.py`.
 """
 
 TABLE_HEADER = (

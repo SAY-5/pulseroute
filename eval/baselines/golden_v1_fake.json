@@ -1,14 +1,14 @@
 {
   "suite": "golden_v1",
   "provider": "fake",
-  "n_tasks": 30,
-  "git_sha": "10b7e18",
-  "generated_at": "2026-05-05T22:06:54+00:00",
+  "n_tasks": 220,
+  "git_sha": "bde8127",
+  "generated_at": "2026-05-05T22:18:37+00:00",
   "note": "Hermetic FakeProvider baseline. Quality numbers come from scripted deterministic outputs in deterministic_fake_outputs(); they exercise the eval pipeline but are not measurements of any real model.",
   "models": [
     {
       "model": "fake-small",
-      "n_tasks": 30,
+      "n_tasks": 220,
       "accuracy": 1.0,
       "by_category": {
         "math": 1.0,
@@ -18,11 +18,11 @@
       },
       "refusal_compliance": 1.0,
       "p95_latency_ms": 0,
-      "cost_per_task_usd": 2.6e-07
+      "cost_per_task_usd": 7.4e-07
     },
     {
       "model": "fake-large",
-      "n_tasks": 30,
+      "n_tasks": 220,
       "accuracy": 1.0,
       "by_category": {
         "math": 1.0,
@@ -32,7 +32,7 @@
       },
       "refusal_compliance": 1.0,
       "p95_latency_ms": 0,
-      "cost_per_task_usd": 2.62e-06
+      "cost_per_task_usd": 7.38e-06
     }
   ]
 }

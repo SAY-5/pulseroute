@@ -15,7 +15,8 @@ async def test_bench_models_returns_expected_schema():
     payload = await bench_models(["fake-small", "fake-large"])
     assert payload["suite"] == "golden_v1"
     assert payload["provider"] == "fake"
-    assert payload["n_tasks"] == 30
+    # 200 GSM8K math problems + 5 code + 5 refusal + 10 RAG = 220.
+    assert payload["n_tasks"] == 220
     assert {m["model"] for m in payload["models"]} == {"fake-small", "fake-large"}
     for m in payload["models"]:
         assert m["accuracy"] == pytest.approx(1.0)

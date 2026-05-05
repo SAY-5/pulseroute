@@ -52,3 +52,7 @@ clients/generated/
 # in eval/baselines/.
 eval/runs/
 .hypothesis/
+
+# Cached upstream datasets (e.g. GSM8K) used to rebuild eval suites at
+# build time. The committed YAMLs under eval/suites/ are the audit trail.
+scripts/data/
