@@ -145,8 +145,8 @@ pulseroute-eval run \
 Then point `scripts/gen_pareto_md.py` at the artifact to render the live
 table. Note: the CLI currently only accepts `--provider fake`; the
 OpenAI/Anthropic adapters in `packages/router/pulseroute_router/providers/`
-are production-ready and used by the gateway, but wiring them into the eval
-CLI is the first step in the BYOK path. Drop a small `--provider {openai,anthropic}`
+are already wired into the gateway request path and covered by `respx` tests,
+but wiring them into the eval CLI is the first step in the BYOK path. Drop a small `--provider {openai,anthropic}`
 branch in `services/eval-runner/pulseroute_eval/cli.py:run` that constructs
 the matching provider with the env-var key and the rest of the pipeline
 takes over unchanged.
