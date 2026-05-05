@@ -65,6 +65,34 @@ reproduce. Live Pareto requires BYOK — see "Live eval (BYOK)" below.
 table is sourced from `eval/baselines/golden_v1_fake.json`; if you change the
 suite or scoring, regenerate with `make bench-eval` and copy the row(s) here.
 
+## Performance
+
+`make bench` replays a deterministic 10k-request synthetic workload through
+the in-process gateway (FakeProvider, fakeredis) and writes the artifact to
+`bench/results/<timestamp>.json`. Numbers below are from
+`bench/results/20260505_233220Z.json` on an M-series Mac.
+
+| metric | value |
+|---|---|
+| Gateway-added latency P50 / P95 / P99 / P999 | 51.6 / 146.8 / 158.0 / 184.4 ms |
+| Cache hit rate — overall / dups / uniques | 39.8% / 93.2% / 16.9% |
+| Routing decisions: `quality_first` / `cache_hit` / `cost_capped` | 56.1% / 39.8% / 4.1% |
+| Cost — routed vs pinned `fake-large` | $0.124 vs $0.514 |
+| Cost savings vs single-provider baseline | **75.9%** |
+
+On the duplicate-heavy synthetic workload (30% repeat ratio), routing plus
+the semantic cache saves 75.9% over the pinned-`fake-large` baseline.
+Production traffic with lower duplication would see less savings; the
+30% ratio is realistic for autocomplete or template-driven workloads but
+not for free-form chat. See `bench/README.md` for methodology.
+
+The gateway-added P95 is higher than the README's design target of
+< 120 ms because the in-process `SemanticCache` over fakeredis is O(N)
+in stored vectors per lookup. Production deployments swap that scan for
+RediSearch HNSW (per the module docstring in
+`packages/cache/pulseroute_cache/semantic.py`); the cache-free wrap
+latency reported by `scripts/bench_asgi.py` stays at ~5 ms P95.
+
 ## Quickstart
 
 ```bash
@@ -153,17 +181,27 @@ takes over unchanged.
 
 ## Design targets
 
-These are the gateway's stated targets. Numbers below come from the in-process
-ASGI bench (`scripts/bench_asgi.py`) on a quiet workstation; production figures
-require running `bench.sh` against the docker stack.
+These are the gateway's stated targets. The "cache-off" column is from the
+in-process ASGI bench (`scripts/bench_asgi.py`) which sets
+`pulseroute_no_cache=true`. The "cache-on" column is from the 10k-request
+gateway bench (`make bench`, `bench/bench.py`) on a quiet workstation;
+production figures require running `bench.sh` against the docker stack.
 
-| Metric | Target | Local in-process |
-|---|---|---|
-| P50 added gateway latency | < 40 ms | ~3 ms |
-| P95 added gateway latency (excl. upstream) | < 120 ms | ~5 ms |
-| Semantic cache hit rate on repeat workloads | >= 35% | (workload-dependent; see `tests/unit/test_cache.py`) |
-| Cost reduction vs single-provider baseline | >= 25% | <TBD on workload mix> |
-| Drift alarm | fires on > 2% regression on canary suite | implemented; production threshold configurable |
+| Metric | Target | Local cache-off | Local cache-on (10k) |
+|---|---|---|---|
+| P50 added gateway latency | < 40 ms | ~3 ms | 51.6 ms |
+| P95 added gateway latency (excl. upstream) | < 120 ms | ~5 ms | 146.8 ms |
+| Semantic cache hit rate on repeat workloads | >= 35% | — | 39.8% (93.2% on dups) |
+| Cost reduction vs single-provider baseline | >= 25% | — | 75.9% |
+| Drift alarm | fires on > 2% regression on canary suite | implemented; production threshold configurable | |
+
+The cache-on P95 misses the < 120 ms target because the in-process
+`SemanticCache` does an O(N) cosine scan per lookup over fakeredis. By the
+end of the 10k run there are ~7k unique entries, and the scan dominates the
+gateway-added latency. Production deployments swap that scan for RediSearch
+HNSW per the module docstring in
+`packages/cache/pulseroute_cache/semantic.py` — see `bench/README.md` for
+methodology and caveats.
 
 CI runs `bench_asgi.py` with the P95 budget relaxed to 200 ms to absorb GitHub
 Actions runner variance.
@@ -239,8 +277,12 @@ client
 |-- scripts/
 |   |-- seed.py              # 3 tenants + 50k synthetic rows
 |   |-- bench.sh             # live perf smoke
-|   |-- bench_asgi.py        # hermetic in-process bench
+|   |-- bench_asgi.py        # hermetic in-process bench (cache-off wrap)
 |   |-- clickhouse_migrate.py
+|-- bench/
+|   |-- bench.py             # 10k-request gateway bench (cache-on, cost vs baseline)
+|   |-- README.md            # methodology
+|   |-- results/             # JSON artifacts
 |-- tests/
 |   |-- unit/                # all tests run without docker
 |   |-- integration/         # gated on RUN_INTEGRATION=1 (not yet wired)
