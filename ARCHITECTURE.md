@@ -157,57 +157,81 @@ clients that inspect chunks see the structured error.
 
 ## Drift detection — statistical power
 
-The `golden_v1` suite has **N = 30 tasks** (10 math, 5 code, 5 refusal,
-10 RAG). Drift detection compares a candidate model's per-category
-accuracy against the committed baseline and flags anything that moves by
-more than the configured threshold (default 2 percentage points).
+The `golden_v1` suite has **N = 220 tasks** (200 GSM8K math, 5 code,
+5 refusal, 10 RAG). Drift detection compares a candidate model's
+per-category accuracy against the committed baseline and flags anything
+that moves by more than the configured threshold (default 2 percentage
+points).
 
 For a binomial proportion `p` over `n` independent trials, the standard
 error is
 
     SE(p) = sqrt(p * (1 - p) / n)
 
-At the suite-wide level (`n = 30`, `p ≈ 0.9` for a healthy model) that's
+At the math sub-suite level (`n = 200`, `p ≈ 0.9` for a healthy model):
 
-    SE = sqrt(0.9 * 0.1 / 30) ≈ 0.055  →  ±5.5pp at 1σ
+    SE = sqrt(0.9 * 0.1 / 200) ≈ 0.0212  →  ±2.1pp at 1σ
 
-A 2pp absolute regression is well inside that 1σ band, so a single run
-**cannot** detect a 2pp drop at p < 0.05. The minimum detectable effect
-(MDE) for one run at p < 0.05 (z = 1.96) is roughly 1.96 * SE ≈ 11pp.
+The 1.96σ minimum detectable effect (MDE) at p < 0.05 is therefore
 
-To detect a 2pp regression at p < 0.05 we need either:
+    MDE_math = 1.96 * 0.0212 ≈ 0.042  →  ~4.2pp single-run
 
-1. **More runs.** With `k` runs the SE shrinks by `sqrt(k)`. To bring the
-   1.96σ bound to ≤ 2pp at `p ≈ 0.9` we need
+So a single run of the math sub-suite **cannot quite** clear the 2pp bar
+on its own; it gets us within a factor of 2 of the goal. To reach 2pp at
+p < 0.05 we use the canary window in addition to the math suite.
 
-       1.96 * sqrt(0.9 * 0.1 / (30 * k)) ≤ 0.02
-       →  k ≥ 1.96² * 0.09 / (30 * 0.02²) ≈ 29 runs
+The Sprint-2 canary sampler defaults to a **1000-judgment rolling window**
+(see `pulseroute canary run --alert-min-window`). Treating math (200) +
+canary (800) as one combined window:
 
-   so roughly **30 deterministic runs** of the suite per candidate, or
+    SE_combined = sqrt(0.9 * 0.1 / 1000) ≈ 0.00949
+    MDE_combined = 1.96 * 0.00949 ≈ 0.0186  →  ~1.9pp
 
-2. **A bigger suite.** Inverting the same inequality for `n` at `k = 1`
-   gives `n ≥ 1.96² * 0.09 / 0.02² ≈ 865` tasks. A 1000-task suite
-   detects 2pp at p < 0.05 in a single run.
+That clears the 2pp threshold. Below 1000 the alert does not fire
+(`should_alert` enforces this floor) so noise can't trip a regression
+verdict.
 
-Per-category power is worse: the math sub-suite (`n = 10`) has
-`SE ≈ 0.095` at `p = 0.9` so its single-run MDE is ~19pp. **Anything
-smaller than ~20pp on a single category needs multiple runs to debias.**
+To detect a 2pp regression on the math sub-suite alone at p < 0.05 we
+would need either:
 
-The suite is intentionally small for CI cost (the smoke job runs in
-under a second). The drift job is meant to consume canary traffic
-samples in addition to the golden suite — that's where statistical
-power comes from in production. The committed baseline in
-`eval/baselines/golden_v1_fake.json` records `n_tasks` so the math is
-auditable.
+1. **More runs.** With `k` runs the SE shrinks by `sqrt(k)`:
+
+       1.96 * sqrt(0.09 / (200 * k)) ≤ 0.02
+       →  k ≥ 1.96² * 0.09 / (200 * 0.02²) ≈ 4.32
+
+   so **5 deterministic runs** of the math sub-suite per candidate, or
+
+2. **A bigger sample.** Inverting the same inequality for `n` at `k = 1`
+   gives `n ≥ 1.96² * 0.09 / 0.02² ≈ 865` problems — covered by
+   combining the 200-problem math suite with the 800-judgment canary
+   floor.
+
+Per-category power is worse for the small categories: the code and
+refusal sub-suites (`n = 5` each) have `SE ≈ 0.13` at `p = 0.9`, so
+single-run MDE is ~26pp. **Anything smaller than ~25pp on those small
+categories needs multiple runs to debias.** RAG (`n = 10`) is at
+`SE ≈ 0.095` → MDE ~19pp single-run. Math is the only category with
+production-grade single-run power.
+
+Math suite size grew 10 → 200 in Sprint 2; the combined math+canary
+window of 1000 is what makes the README's 2pp claim actually defensible.
+The committed baseline in `eval/baselines/golden_v1_fake.json` records
+`n_tasks` so the math above is auditable, and
+`tests/unit/test_eval_suite.py` enforces `len(MATH_SUITE) >= 200` so the
+calculation can't silently drift.
 
 ## What's deliberately not here
 
 - **Distributed circuit breaker.** In-process is enough for a single-pod
   deployment. A sketch of a Redis-backed sliding window lives in the roadmap.
-- **Real-traffic canary scoring.** The `canary_results` table and the drift
-  detection arithmetic are present; a production sampler (route 1% of traffic
-  to the candidate model and diff against baseline output) is not. The eval
-  CLI is the offline analogue.
+- **Real-traffic canary scoring.** Wired (Sprint 2). The sampler in
+  `services/eval-runner/pulseroute_eval/canary.py` pulls the most recent
+  `cache_hit = 0 AND error_code = ''` rows out of `request_log`,
+  deterministically subsamples them given
+  `(window_start, window_end, sample_rate, seed)`, replays each through both
+  arms, scores via the rubric at `eval/rubrics/canary_quality.md`, and
+  persists to `canary_results`. Slack webhook is env-gated and off by
+  default. See `pulseroute canary run --help`.
 - **Per-request-token billing reconciliation.** `cost_usd` in `request_log` is
   estimated from the price table at request time. For invoicing-grade numbers
   pull provider usage exports nightly and reconcile.

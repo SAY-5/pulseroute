@@ -5,6 +5,11 @@ It does policy-driven routing across providers, semantic caching, per-tenant cos
 ceilings, per-(provider, model) circuit breakers, and runs an eval suite as part of
 CI. The hot path is FastAPI on uvicorn; analytics live in ClickHouse.
 
+> Drift detection fires on a 2% regression detected at p<0.05 over a rolling
+> N=1000 canary window (math suite N=200 plus 800 sampled requests). At
+> smaller sample sizes the threshold widens; see ARCHITECTURE.md
+> §drift-statistical-power.
+
 ## What this studies
 
 - **Routing under uncertainty.** Picking a model is a multi-objective decision
@@ -14,9 +19,10 @@ CI. The hot path is FastAPI on uvicorn; analytics live in ClickHouse.
 - **Semantic caching that doesn't lie.** Cache hits are gated on cosine
   similarity above a configurable threshold (default 0.97) of a normalised
   prompt fingerprint, scoped per-tenant. Tenants can opt out per request.
-- **Hermetic eval-as-CI.** A 30-task golden suite scored across math, code,
-  refusal, and grounded QA runs against `FakeProvider` on every PR — the
-  pipeline is exercised end-to-end without burning real provider credits.
+- **Hermetic eval-as-CI.** A 220-task golden suite (200 GSM8K math problems
+  + 5 code + 5 refusal + 10 grounded QA) scored against `FakeProvider` on
+  every PR — the pipeline is exercised end-to-end without burning real
+  provider credits.
 - **Failure-mode discipline.** User-facing requests fail fast with structured
   errors (no in-request retry); only async non-user-facing work uses retries
   with DLQ. The breaker state machine is unit-tested.
@@ -26,7 +32,7 @@ CI. The hot path is FastAPI on uvicorn; analytics live in ClickHouse.
 | Path | Purpose |
 |---|---|
 | `services/gateway/` | FastAPI app, OpenAI-compatible API, SSE streaming, admin |
-| `services/eval-runner/` | Click CLI, golden suite, scoring, drift detection |
+| `services/eval-runner/` | Click CLI, golden suite, scoring, drift detection, real-traffic canary sampler |
 | `packages/router/` | `ChatProvider` Protocol, providers (OpenAI/Anthropic/Fake), routing policies, circuit breaker, cost model |
 | `packages/policies/` | Cost ceilings, content filter, PII redaction |
 | `packages/cache/` | Prompt normalisation, embeddings, Redis-backed semantic cache |
@@ -38,14 +44,22 @@ CI. The hot path is FastAPI on uvicorn; analytics live in ClickHouse.
 
 ## Eval results (golden_v1, FakeProvider)
 
+Math sub-suite: 200 problems sampled deterministically from GSM8K test split
+(seed=42). Full suite N=220 (200 math + 5 code + 5 refusal + 10 RAG).
+
 | model | accuracy | math | code | refusal | rag | refusal_compliance | p95_latency_ms | cost_per_task_usd |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| **fake-small** | **100.0%** | **100.0%** | **100.0%** | **100.0%** | **100.0%** | **100.0%** | **0** | **$2.60e-07** |
-| fake-large | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 0 | $2.62e-06 |
+| **fake-small** | **100.0%** | **100.0%** | **100.0%** | **100.0%** | **100.0%** | **100.0%** | **0** | **$7.40e-07** |
+| fake-large | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 0 | $7.38e-06 |
 
 FakeProvider hermetic baseline, M-series Mac. Quality numbers are scripted;
 pipeline correctness only. See `eval/baselines/` and `make bench-eval` to
 reproduce. Live Pareto requires BYOK — see "Live eval (BYOK)" below.
+
+> Gateway-added latency on M-series Mac, measured by Prometheus histogram in
+> `services/gateway/app/metrics.py`: P50 7 ms, P95 9 ms (bucket granularity
+> 25 ms; HDR-based finer-grained numbers pending `packages/shared/hdr.py`
+> port — see `ROADMAP.md`).
 
 **Bold** rows are on the cheapest-acceptable-quality Pareto frontier. The
 table is sourced from `eval/baselines/golden_v1_fake.json`; if you change the
@@ -55,9 +69,9 @@ suite or scoring, regenerate with `make bench-eval` and copy the row(s) here.
 
 ```bash
 make install          # editable install + dev deps
-make test             # unit tests (66+ tests, ~0.5s)
+make test             # unit tests (117+ tests, ~1.5s)
 make typecheck        # mypy strict on router + policies
-pulseroute-eval smoke # 30-task golden suite via FakeProvider
+pulseroute-eval smoke # 220-task golden suite via FakeProvider
 ```
 
 To run the full local stack:
@@ -190,17 +204,18 @@ client
 
 ## Tests
 
-- **66+ unit tests, ~0.5s.** Routing-policy decision tables (10 scenarios),
+- **117+ unit tests, ~1.5s.** Routing-policy decision tables (10 scenarios),
   cache key normalisation, cost calculator across the full price table,
   circuit breaker state machine, gateway happy-path + failover + streaming +
-  admin pagination.
+  admin pagination, GSM8K math suite invariants, canary sampler determinism
+  and alert thresholds.
 - **Coverage.** `packages/router` and `packages/policies` are gated at 85%
   (currently ~91%).
 - **Provider HTTP** is mocked with `respx` so no real keys are needed.
 - **`migrate-check`** runs Alembic + ClickHouse migrations from scratch
   against the GHA postgres+clickhouse services on every push.
 - **`perf-smoke`** runs an in-process bench gated at P95 < 200 ms.
-- **`eval-smoke`** runs the 30-task golden suite via FakeProvider and asserts
+- **`eval-smoke`** runs the 220-task golden suite via FakeProvider and asserts
   no crashes (the deterministic crafted outputs hit every scoring path).
 
 ## Layout
@@ -242,8 +257,12 @@ client
   reconcile against provider invoices.
 - **Not a moderation provider.** Content filter is a thin blocklist + length
   guard. Wire to a real moderation endpoint for production.
-- **No real-traffic canary.** The `canary_results` table and drift scoring
-  exist; the production wiring (sampler + Slack alert) is left as a stub.
+- **Real-traffic canary sampler.** Wired (Sprint 2). `pulseroute canary run`
+  pulls recent rows out of `request_log`, deterministically subsamples, replays
+  through both arms, scores against an LLM judge with rubric committed at
+  `eval/rubrics/canary_quality.md`, persists to `canary_results`, and posts a
+  Slack alert when the canary loses by > 2pp over a 1000-sample window. Slack
+  webhook is env-gated (`PULSEROUTE_CANARY_SLACK_WEBHOOK`); off by default.
 - **No GraphQL admin.** The admin API is REST + cursor pagination only.
 - **No request-level retries.** User-facing requests fail fast with a
   structured error; clients decide whether to retry. Async eval/canary jobs do
