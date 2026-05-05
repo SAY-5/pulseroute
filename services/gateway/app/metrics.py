@@ -1,14 +1,24 @@
-"""Prometheus metrics. Module-level so they register exactly once."""
+"""Prometheus metrics. Module-level so they register exactly once.
+
+Gateway-added latency and cache lookup latency are sub-millisecond on the
+hot path; the Prometheus ``Histogram`` bucket spacing of 5–25 ms hides
+that resolution. Both are now tracked by
+:class:`pulseroute_shared.hdr.HdrHistogram` and exported on scrape via
+``HdrHistogram.export_prometheus``. End-to-end request latency keeps the
+existing Prometheus ``Histogram`` (provider-side, where 25 ms granularity
+matches reality).
+"""
 
 from __future__ import annotations
 
-from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client import Counter, Gauge
+from pulseroute_shared.hdr import HdrHistogram
 
-GATEWAY_ADDED_LATENCY = Histogram(
-    "gateway_added_latency_seconds",
-    "Latency added by the gateway, excluding upstream provider time.",
-    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0),
-)
+GATEWAY_ADDED_LATENCY_HDR = HdrHistogram()
+"""Microsecond-resolution gateway-added latency, excludes upstream time."""
+
+CACHE_LOOKUP_LATENCY_HDR = HdrHistogram()
+"""Microsecond-resolution cache lookup latency (hit + miss paths)."""
 
 CACHE_HIT_RATE = Gauge(
     "cache_hit_rate",
@@ -45,3 +55,33 @@ PROVIDER_REQUESTS = Counter(
     "Provider request count.",
     labelnames=("provider", "model"),
 )
+
+
+def record_gateway_added(elapsed_seconds: float) -> None:
+    """Record gateway-added latency into the HDR histogram (microseconds)."""
+    GATEWAY_ADDED_LATENCY_HDR.record(int(elapsed_seconds * 1_000_000))
+
+
+def record_cache_lookup(elapsed_seconds: float) -> None:
+    """Record cache lookup latency into the HDR histogram (microseconds)."""
+    CACHE_LOOKUP_LATENCY_HDR.record(int(elapsed_seconds * 1_000_000))
+
+
+def hdr_exposition() -> str:
+    """Render the HDR-backed metric blocks for the /metrics scrape."""
+    blocks: list[str] = []
+    if GATEWAY_ADDED_LATENCY_HDR.total_count() > 0:
+        blocks.append(
+            GATEWAY_ADDED_LATENCY_HDR.export_prometheus(
+                "gateway_added_latency_seconds",
+                help_text="HDR-backed gateway-added latency (excludes upstream).",
+            )
+        )
+    if CACHE_LOOKUP_LATENCY_HDR.total_count() > 0:
+        blocks.append(
+            CACHE_LOOKUP_LATENCY_HDR.export_prometheus(
+                "cache_lookup_latency_seconds",
+                help_text="HDR-backed cache lookup latency (hit + miss paths).",
+            )
+        )
+    return "".join(blocks)

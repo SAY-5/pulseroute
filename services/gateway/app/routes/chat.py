@@ -20,9 +20,10 @@ from pulseroute_gateway.metrics import (
     CACHE_LOOKUPS,
     CIRCUIT_BREAKER_STATE,
     COST_USD_TOTAL,
-    GATEWAY_ADDED_LATENCY,
     PROVIDER_ERRORS,
     PROVIDER_REQUESTS,
+    record_cache_lookup,
+    record_gateway_added,
 )
 from pulseroute_gateway.tenant import get_tenant_context
 from pulseroute_router.breaker import CircuitState
@@ -87,15 +88,17 @@ async def chat_completions(
 
     # Cache lookup honours tenant override flag.
     if not body.pulseroute_no_cache:
+        cache_started = time.perf_counter()
         try:
             lookup = await deps.cache.lookup(tenant_ctx.tenant_id, body.messages)
         except Exception as exc:  # pragma: no cover - guard against Redis blips
             log.warning("cache_lookup_failed", error=str(exc))
             lookup = None
+        record_cache_lookup(time.perf_counter() - cache_started)
         if lookup and lookup.hit and lookup.entry is not None:
             CACHE_LOOKUPS.labels(tenant_id=tenant_ctx.tenant_id, outcome="hit").inc()
             entry = lookup.entry
-            GATEWAY_ADDED_LATENCY.observe(time.perf_counter() - gateway_started)
+            record_gateway_added(time.perf_counter() - gateway_started)
             return ChatCompletionResponse(
                 id=f"chatcmpl-{uuid.uuid4().hex}",
                 created=int(entry.created_at),
@@ -130,7 +133,7 @@ async def chat_completions(
 
     if body.stream:
         gateway_added = time.perf_counter() - gateway_started
-        GATEWAY_ADDED_LATENCY.observe(gateway_added)
+        record_gateway_added(gateway_added)
         return StreamingResponse(
             _sse_stream(provider, body_for_call, decision, tenant_ctx.tenant_id),
             media_type="text/event-stream",
@@ -223,7 +226,7 @@ async def chat_completions(
 
     upstream_elapsed = time.perf_counter() - upstream_started
     total_elapsed = time.perf_counter() - gateway_started
-    GATEWAY_ADDED_LATENCY.observe(max(0.0, total_elapsed - upstream_elapsed))
+    record_gateway_added(max(0.0, total_elapsed - upstream_elapsed))
     return out
 
 

@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pulseroute_gateway.deps import get_dependencies
+from pulseroute_gateway.metrics import hdr_exposition
 from pulseroute_gateway.routes import admin, chat
 from pulseroute_shared.otel import configure_logging, init_tracing
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -39,7 +40,8 @@ def create_app() -> FastAPI:
 
     @app.get("/metrics", include_in_schema=False)
     async def metrics() -> Response:
-        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+        body = generate_latest() + hdr_exposition().encode()
+        return Response(body, media_type=CONTENT_TYPE_LATEST)
 
     # Force a single shared dependency container per process.
     app.state.deps = get_dependencies()
