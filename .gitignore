@@ -47,3 +47,8 @@ node_modules/
 
 # Generated
 clients/generated/
+
+# Eval run artifacts (timestamped, local-only). The committed reference lives
+# in eval/baselines/.
+eval/runs/
+.hypothesis/

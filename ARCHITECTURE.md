@@ -155,6 +155,51 @@ data: [DONE]
 This way clients that look for `[DONE]` continue to terminate cleanly while
 clients that inspect chunks see the structured error.
 
+## Drift detection — statistical power
+
+The `golden_v1` suite has **N = 30 tasks** (10 math, 5 code, 5 refusal,
+10 RAG). Drift detection compares a candidate model's per-category
+accuracy against the committed baseline and flags anything that moves by
+more than the configured threshold (default 2 percentage points).
+
+For a binomial proportion `p` over `n` independent trials, the standard
+error is
+
+    SE(p) = sqrt(p * (1 - p) / n)
+
+At the suite-wide level (`n = 30`, `p ≈ 0.9` for a healthy model) that's
+
+    SE = sqrt(0.9 * 0.1 / 30) ≈ 0.055  →  ±5.5pp at 1σ
+
+A 2pp absolute regression is well inside that 1σ band, so a single run
+**cannot** detect a 2pp drop at p < 0.05. The minimum detectable effect
+(MDE) for one run at p < 0.05 (z = 1.96) is roughly 1.96 * SE ≈ 11pp.
+
+To detect a 2pp regression at p < 0.05 we need either:
+
+1. **More runs.** With `k` runs the SE shrinks by `sqrt(k)`. To bring the
+   1.96σ bound to ≤ 2pp at `p ≈ 0.9` we need
+
+       1.96 * sqrt(0.9 * 0.1 / (30 * k)) ≤ 0.02
+       →  k ≥ 1.96² * 0.09 / (30 * 0.02²) ≈ 29 runs
+
+   so roughly **30 deterministic runs** of the suite per candidate, or
+
+2. **A bigger suite.** Inverting the same inequality for `n` at `k = 1`
+   gives `n ≥ 1.96² * 0.09 / 0.02² ≈ 865` tasks. A 1000-task suite
+   detects 2pp at p < 0.05 in a single run.
+
+Per-category power is worse: the math sub-suite (`n = 10`) has
+`SE ≈ 0.095` at `p = 0.9` so its single-run MDE is ~19pp. **Anything
+smaller than ~20pp on a single category needs multiple runs to debias.**
+
+The suite is intentionally small for CI cost (the smoke job runs in
+under a second). The drift job is meant to consume canary traffic
+samples in addition to the golden suite — that's where statistical
+power comes from in production. The committed baseline in
+`eval/baselines/golden_v1_fake.json` records `n_tasks` so the math is
+auditable.
+
 ## What's deliberately not here
 
 - **Distributed circuit breaker.** In-process is enough for a single-pod

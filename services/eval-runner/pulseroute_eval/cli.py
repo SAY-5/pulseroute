@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from pathlib import Path
 
 import click
 from pulseroute_router.providers.fake import FakeProvider
 
+from pulseroute_eval.bench import bench_models, write_artifact
 from pulseroute_eval.runner import deterministic_fake_outputs, run_suite, smoke
 from pulseroute_eval.suites import GOLDEN_SUITE
 
@@ -28,7 +30,20 @@ def main() -> None:
 @click.option("--model", default="fake-large", show_default=True)
 @click.option("--concurrency", default=8, show_default=True)
 @click.option("--json-out", "json_out", is_flag=True, help="Print JSON instead of human output.")
-def run(suite: str, provider: str, model: str, concurrency: int, json_out: bool) -> None:
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Optional path to write the JSON result artifact to.",
+)
+def run(
+    suite: str,
+    provider: str,
+    model: str,
+    concurrency: int,
+    json_out: bool,
+    output: Path | None,
+) -> None:
     """Run an eval suite against a provider."""
     if suite != "golden":
         click.echo(f"unknown suite: {suite}", err=True)
@@ -47,18 +62,19 @@ def run(suite: str, provider: str, model: str, concurrency: int, json_out: bool)
             faked_outputs=deterministic_fake_outputs(),
         )
     )
+    payload = {
+        "model": result.model,
+        "accuracy": result.accuracy,
+        "by_category": result.by_category,
+        "p95_latency_ms": result.p95_latency_ms,
+        "n_tasks": len(result.tasks),
+    }
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(payload, indent=2) + "\n")
+
     if json_out:
-        click.echo(
-            json.dumps(
-                {
-                    "model": result.model,
-                    "accuracy": result.accuracy,
-                    "by_category": result.by_category,
-                    "p95_latency_ms": result.p95_latency_ms,
-                    "n_tasks": len(result.tasks),
-                }
-            )
-        )
+        click.echo(json.dumps(payload))
         return
 
     click.echo(f"suite=golden model={result.model} n={len(result.tasks)}")
@@ -66,6 +82,30 @@ def run(suite: str, provider: str, model: str, concurrency: int, json_out: bool)
     click.echo(f"p95 latency: {result.p95_latency_ms} ms")
     for cat, sc in sorted(result.by_category.items()):
         click.echo(f"  {cat}: {sc:.2%}")
+
+
+@main.command()
+@click.option(
+    "--models",
+    default="fake-small,fake-large",
+    show_default=True,
+    help="Comma-separated model names to compare.",
+)
+@click.option(
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    required=True,
+    help="Path to write the multi-model JSON artifact.",
+)
+def bench(models: str, output: Path) -> None:
+    """Run the suite against multiple models and emit a Pareto-style artifact."""
+    model_list = [m.strip() for m in models.split(",") if m.strip()]
+    if not model_list:
+        click.echo("no models given", err=True)
+        sys.exit(2)
+    payload = asyncio.run(bench_models(model_list))
+    write_artifact(payload, output)
+    click.echo(f"wrote {output}  ({len(model_list)} models, {payload['n_tasks']} tasks each)")
 
 
 @main.command()

@@ -1,4 +1,4 @@
-.PHONY: install dev migrate seed test test-cov lint typecheck eval bench up down clean
+.PHONY: install dev migrate seed test test-cov lint typecheck eval bench bench-eval up down clean
 
 install:
 	pip install -e ".[dev]"
@@ -37,6 +37,17 @@ eval:
 
 bench:
 	bash scripts/bench.sh
+
+# Re-run the golden suite against every wired fake model and refresh the
+# committed baseline + a timestamped run artifact under eval/runs/.
+bench-eval:
+	@mkdir -p eval/baselines eval/runs
+	@TS=$$(date -u +%Y%m%dT%H%M%SZ); \
+	pulseroute-eval bench --models fake-small,fake-large \
+	  --output eval/baselines/golden_v1_fake.json; \
+	cp eval/baselines/golden_v1_fake.json eval/runs/$$TS.json; \
+	python scripts/gen_pareto_md.py eval/baselines/golden_v1_fake.json eval/baselines/pareto.md; \
+	echo "fresh run -> eval/runs/$$TS.json"
 
 up:
 	docker compose up -d

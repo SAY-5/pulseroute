@@ -36,6 +36,21 @@ CI. The hot path is FastAPI on uvicorn; analytics live in ClickHouse.
 | `infra/dashboards/` | Grafana JSON: overview, router, providers |
 | `services/gateway/migrations/` | Alembic control-plane migrations |
 
+## Eval results (golden_v1, FakeProvider)
+
+| model | accuracy | math | code | refusal | rag | refusal_compliance | p95_latency_ms | cost_per_task_usd |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| **fake-small** | **100.0%** | **100.0%** | **100.0%** | **100.0%** | **100.0%** | **100.0%** | **0** | **$2.60e-07** |
+| fake-large | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 0 | $2.62e-06 |
+
+FakeProvider hermetic baseline, M-series Mac. Quality numbers are scripted;
+pipeline correctness only. See `eval/baselines/` and `make bench-eval` to
+reproduce. Live Pareto requires BYOK — see "Live eval (BYOK)" below.
+
+**Bold** rows are on the cheapest-acceptable-quality Pareto frontier. The
+table is sourced from `eval/baselines/golden_v1_fake.json`; if you change the
+suite or scoring, regenerate with `make bench-eval` and copy the row(s) here.
+
 ## Quickstart
 
 ```bash
@@ -81,12 +96,46 @@ r = c.chat.completions.create(
 # Eval suite (FakeProvider, deterministic)
 pulseroute-eval run --suite golden --provider fake --model fake-large
 
+# Multi-model bench → eval/baselines/golden_v1_fake.json + eval/runs/<ts>.json
+make bench-eval
+
 # Hermetic perf bench (no docker; uses ASGI transport)
 python scripts/bench_asgi.py --n 200 --concurrency 16 --p95-budget-ms 200
 
 # Live perf bench (requires `make up && make dev`)
 bash scripts/bench.sh
 ```
+
+## Live eval (BYOK)
+
+The committed eval table above uses FakeProvider, which exercises the
+pipeline end-to-end without burning real tokens. To produce a live Pareto
+table against actual providers, set the relevant key(s) and run the eval
+CLI against the providers you care about:
+
+```bash
+export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-ant-...
+
+pulseroute-eval run \
+    --suite golden_v1 \
+    --provider openai --model gpt-4o-mini \
+    --output eval/runs/$(date -u +%Y%m%dT%H%M%SZ)-gpt4o-mini.json
+
+pulseroute-eval run \
+    --suite golden_v1 \
+    --provider anthropic --model claude-3-5-sonnet \
+    --output eval/runs/$(date -u +%Y%m%dT%H%M%SZ)-sonnet.json
+```
+
+Then point `scripts/gen_pareto_md.py` at the artifact to render the live
+table. Note: the CLI currently only accepts `--provider fake`; the
+OpenAI/Anthropic adapters in `packages/router/pulseroute_router/providers/`
+are production-ready and used by the gateway, but wiring them into the eval
+CLI is the first step in the BYOK path. Drop a small `--provider {openai,anthropic}`
+branch in `services/eval-runner/pulseroute_eval/cli.py:run` that constructs
+the matching provider with the env-var key and the rest of the pipeline
+takes over unchanged.
 
 ## Design targets
 
