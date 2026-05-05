@@ -48,6 +48,7 @@ dev = [
 
 [project.scripts]
 pulseroute-eval = "pulseroute_eval.cli:main"
+pulseroute = "pulseroute_eval.cli:main"
 
 [tool.setuptools]
 packages = [

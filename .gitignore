@@ -51,6 +51,7 @@ clients/generated/
 # Eval run artifacts (timestamped, local-only). The committed reference lives
 # in eval/baselines/.
 eval/runs/
+eval/canary/
 .hypothesis/
 
 # Cached upstream datasets (e.g. GSM8K) used to rebuild eval suites at
