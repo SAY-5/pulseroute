@@ -1,4 +1,6 @@
-.PHONY: install dev migrate seed test test-cov lint typecheck eval bench bench-eval up down clean
+.PHONY: install dev migrate seed test test-cov lint typecheck eval bench bench-live bench-eval up down clean
+
+REQUESTS ?= 10000
 
 install:
 	pip install -e ".[dev]"
@@ -36,6 +38,9 @@ eval:
 	pulseroute-eval run --suite golden --provider fake
 
 bench:
+	python bench/bench.py --requests $(REQUESTS)
+
+bench-live:
 	bash scripts/bench.sh
 
 # Re-run the golden suite against every wired fake model and refresh the
