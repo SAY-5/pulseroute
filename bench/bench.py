@@ -244,6 +244,9 @@ class Aggregate:
     cost_routed_usd: float = 0.0
     cost_pinned_usd: float = 0.0
     savings_pct: float = 0.0
+    # HDR-derived (microsecond resolution) percentiles for sub-ms ops.
+    hdr_gateway_added_us: dict[str, int] = field(default_factory=dict)
+    hdr_cache_lookup_us: dict[str, int] = field(default_factory=dict)
 
 
 def _percentile(sorted_vals: list[float], p: float) -> float:
@@ -251,6 +254,17 @@ def _percentile(sorted_vals: list[float], p: float) -> float:
         return 0.0
     k = max(0, min(len(sorted_vals) - 1, int(round(p * (len(sorted_vals) - 1)))))
     return sorted_vals[k]
+
+
+def _hdr_pcts(hdr) -> dict[str, int]:  # type: ignore[no-untyped-def]
+    pcts = hdr.percentiles(0.50, 0.95, 0.99, 0.999)
+    return {
+        "p50_us": pcts[0.50],
+        "p95_us": pcts[0.95],
+        "p99_us": pcts[0.99],
+        "p999_us": pcts[0.999],
+        "n": hdr.total_count(),
+    }
 
 
 def aggregate_samples(samples: list[Sample], cost_pinned_usd: float) -> Aggregate:
@@ -292,6 +306,15 @@ def aggregate_samples(samples: list[Sample], cost_pinned_usd: float) -> Aggregat
         agg.savings_pct = round(
             100.0 * (agg.cost_pinned_usd - agg.cost_routed_usd) / agg.cost_pinned_usd, 4
         )
+
+    # HDR-derived microsecond percentiles for sub-millisecond ops.
+    from pulseroute_gateway.metrics import (
+        CACHE_LOOKUP_LATENCY_HDR,
+        GATEWAY_ADDED_LATENCY_HDR,
+    )
+
+    agg.hdr_gateway_added_us = _hdr_pcts(GATEWAY_ADDED_LATENCY_HDR)
+    agg.hdr_cache_lookup_us = _hdr_pcts(CACHE_LOOKUP_LATENCY_HDR)
     return agg
 
 
@@ -318,6 +341,10 @@ async def run_routed(workload: list[Req]) -> tuple[list[Sample], dict[str, Any]]
     from pulseroute_cache import HashEmbedder, SemanticCache
     from pulseroute_gateway.deps import Dependencies
     from pulseroute_gateway.main import create_app
+    from pulseroute_gateway.metrics import (
+        CACHE_LOOKUP_LATENCY_HDR,
+        GATEWAY_ADDED_LATENCY_HDR,
+    )
     from pulseroute_gateway.tenant import DEMO_TENANTS
     from pulseroute_router import (
         CheapestFirst,
@@ -328,6 +355,11 @@ async def run_routed(workload: list[Req]) -> tuple[list[Sample], dict[str, Any]]
     )
     from pulseroute_router.providers.fake import FakeProvider
     from pulseroute_shared.settings import Settings
+
+    # Reset HDR so this run reports its own numbers, not whatever crud
+    # might have been recorded by an earlier import-time call.
+    GATEWAY_ADDED_LATENCY_HDR.reset()
+    CACHE_LOOKUP_LATENCY_HDR.reset()
 
     # Reset costcap tenant to a clean slate so repeated bench runs are stable,
     # and constrain both tenants to fake-only candidates so the cost number is
@@ -466,13 +498,21 @@ def render_table(agg: Aggregate, meta: dict[str, Any]) -> str:
     n = agg.n_requests
     lines.append(f"# pulseroute bench - {n} requests, mix=short70/med25/long5, dup=30%")
     lines.append(f"# {ts}, M-series Mac, fake-provider")
-    lines.append("## gateway-added latency (ms, excludes upstream)")
+    lines.append("## gateway-added latency (ms, sample-list, excludes upstream)")
     lines.append("p50    p95    p99    p999   max")
     lat = agg.latency
     lines.append(
         f"{lat['p50_ms']:<6} {lat['p95_ms']:<6} {lat['p99_ms']:<6} "
         f"{lat['p999_ms']:<6} {lat['max_ms']}"
     )
+    lines.append("## gateway-added latency (us, HDR log-bucketed)")
+    lines.append("p50    p95    p99    p999")
+    g = agg.hdr_gateway_added_us
+    lines.append(f"{g['p50_us']:<6} {g['p95_us']:<6} {g['p99_us']:<6} {g['p999_us']}")
+    lines.append("## cache lookup latency (us, HDR log-bucketed)")
+    lines.append("p50    p95    p99    p999")
+    c = agg.hdr_cache_lookup_us
+    lines.append(f"{c['p50_us']:<6} {c['p95_us']:<6} {c['p99_us']:<6} {c['p999_us']}")
     lines.append("## cache")
     c = agg.cache
     lines.append(f"hit_rate_overall     : {c['hit_rate_overall'] * 100:.1f}%")
@@ -518,6 +558,8 @@ def write_results(
                 "pinned_usd": agg.cost_pinned_usd,
                 "savings_pct": agg.savings_pct,
             },
+            "hdr_gateway_added_us": agg.hdr_gateway_added_us,
+            "hdr_cache_lookup_us": agg.hdr_cache_lookup_us,
         },
     }
     out.write_text(json.dumps(payload, indent=2))

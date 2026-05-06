@@ -56,10 +56,10 @@ FakeProvider hermetic baseline, M-series Mac. Quality numbers are scripted;
 pipeline correctness only. See `eval/baselines/` and `make bench-eval` to
 reproduce. Live Pareto requires BYOK — see "Live eval (BYOK)" below.
 
-> Gateway-added latency on M-series Mac, measured by Prometheus histogram in
-> `services/gateway/app/metrics.py`: P50 7 ms, P95 9 ms (bucket granularity
-> 25 ms; HDR-based finer-grained numbers pending `packages/shared/hdr.py`
-> port — see `ROADMAP.md`).
+> Gateway-added latency on M-series Mac, measured by HDR histogram in
+> `services/gateway/app/metrics.py` (`packages/shared/pulseroute_shared/hdr.py`):
+> P50 48,128 us, P95 143,360 us — see "Performance" below for what this
+> reveals about the O(N) cache scan.
 
 **Bold** rows are on the cheapest-acceptable-quality Pareto frontier. The
 table is sourced from `eval/baselines/golden_v1_fake.json`; if you change the
@@ -70,11 +70,12 @@ suite or scoring, regenerate with `make bench-eval` and copy the row(s) here.
 `make bench` replays a deterministic 10k-request synthetic workload through
 the in-process gateway (FakeProvider, fakeredis) and writes the artifact to
 `bench/results/<timestamp>.json`. Numbers below are from
-`bench/results/20260505_233220Z.json` on an M-series Mac.
+`bench/results/20260506_000439Z.json` on an M-series Mac.
 
 | metric | value |
 |---|---|
-| Gateway-added latency P50 / P95 / P99 / P999 | 51.6 / 146.8 / 158.0 / 184.4 ms |
+| Gateway-added latency (HDR, us) — P50 / P95 / P99 / P999 | 48,128 / 143,360 / 217,088 / 225,280 |
+| Cache lookup latency (HDR, us) — P50 / P95 / P99 / P999 | 48,128 / 143,360 / 217,088 / 225,280 |
 | Cache hit rate — overall / dups / uniques | 39.8% / 93.2% / 16.9% |
 | Routing decisions: `quality_first` / `cache_hit` / `cost_capped` | 56.1% / 39.8% / 4.1% |
 | Cost — routed vs pinned `fake-large` | $0.124 vs $0.514 |
@@ -86,12 +87,18 @@ Production traffic with lower duplication would see less savings; the
 30% ratio is realistic for autocomplete or template-driven workloads but
 not for free-form chat. See `bench/README.md` for methodology.
 
-The gateway-added P95 is higher than the README's design target of
-< 120 ms because the in-process `SemanticCache` over fakeredis is O(N)
-in stored vectors per lookup. Production deployments swap that scan for
-RediSearch HNSW (per the module docstring in
-`packages/cache/pulseroute_cache/semantic.py`); the cache-free wrap
-latency reported by `scripts/bench_asgi.py` stays at ~5 ms P95.
+The HDR resolution makes the previous "51 ms gateway-added P50, didn't
+hit the 120 ms design target" datum legible: the gateway-added and
+cache-lookup HDR percentiles coincide (P50 48,128 us, P95 143,360 us).
+That isn't a coincidence — it confirms the gateway-added latency is
+dominated by the O(N) cache scan in the in-process `SemanticCache` over
+fakeredis (per the docstring in
+`packages/cache/pulseroute_cache/semantic.py`). The remainder of the
+gateway hot path (auth, routing, cost accounting) accounts for the
+sub-millisecond residual that the previous Prometheus histogram's 25 ms
+buckets hid entirely. Production deployments swap the linear scan for
+RediSearch HNSW; the cache-free wrap latency reported by
+`scripts/bench_asgi.py` stays at ~5 ms P95.
 
 ## Quickstart
 

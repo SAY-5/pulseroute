@@ -96,6 +96,11 @@ async def test_bench_runs_at_smoke_scale(tmp_path: Path):
         "savings_pct",
     }
 
+    # HDR keys (microsecond resolution for sub-ms ops).
+    for key in ("hdr_gateway_added_us", "hdr_cache_lookup_us"):
+        assert key in payload["summary"], f"missing {key}"
+        assert {"p50_us", "p95_us", "p99_us", "p999_us", "n"} <= set(payload["summary"][key].keys())
+
     # Sanity: n_ok should equal n_requests (FakeProvider does not raise).
     assert payload["summary"]["n_ok"] == 1000
     # Stdout table is non-empty and includes the header.

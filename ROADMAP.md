@@ -4,16 +4,6 @@ Tracked deferrals. Each item links to the rationale in code or docs.
 
 ## Deferred — likely future sprints
 
-### HDR histogram port — `packages/shared/hdr.py`
-
-The Prometheus histogram in `services/gateway/app/metrics.py` uses 25 ms
-bucket granularity (see the bucket list near `GATEWAY_ADDED_LATENCY`). At
-the gateway's measured P95 (~9 ms on M-series Mac) buckets that coarse
-make sub-bucket variance invisible — fine for production SLOs, not fine
-for performance-regression analysis at the tail. Plan: port HdrHistogram
-to a small `packages/shared/hdr.py` module and dual-emit; Prometheus
-keeps the buckets, HdrHistogram emits percentiles directly.
-
 ### Distributed circuit breaker
 
 The current breaker (`packages/router/pulseroute_router/breaker.py`) is
@@ -60,7 +50,7 @@ mostly be wrong.
 - Pareto frontier artifact + `make bench-eval`.
 - Drift-detection statistical-power note in ARCHITECTURE.md.
 
-### Sprint 2 (this sprint)
+### Sprint 2
 - Math eval suite expanded from 10 hand-written problems to 200 sampled
   GSM8K test-split problems (deterministic seed=42).
 - Real-traffic canary sampler (`pulseroute canary run`) with deterministic
@@ -69,3 +59,12 @@ mostly be wrong.
 - `canary_results` ClickHouse migration.
 - Drift-power section recalculated for N=200; combined math+canary window
   of 1000 clears the README's 2pp@p<0.05 promise.
+
+### Sprint 4 (this sprint)
+- HDR log-bucketed histogram (`packages/shared/pulseroute_shared/hdr.py`)
+  ported from streamflow's `LatencyHistogram` and orderbook's
+  `histogram.hpp`. Microsecond resolution, ~6% per-bucket relative error,
+  threading.Lock-guarded counter array.
+- Gateway-added latency and cache lookup latency now record into HDR;
+  `/metrics` scrape emits both as Prometheus `histogram` blocks.
+  End-to-end request latency keeps the existing Prometheus `Histogram`.
