@@ -38,12 +38,13 @@ dev = [
     "pytest-asyncio>=0.23",
     "pytest-cov>=4.1",
     "respx>=0.21",
-    "fakeredis>=2.20",
+    "fakeredis[lua]>=2.20",
     "ruff>=0.4",
     "mypy>=1.9",
     "schemathesis>=3.27",
     "types-redis",
     "anyio>=4.3",
+    "hypothesis>=6.100",
 ]
 
 [project.scripts]

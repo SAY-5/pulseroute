@@ -80,12 +80,45 @@ Constants are configurable via `Settings.circuit_breaker_*`. The window is
 event-counted, not wall-time-bucketed — this avoids background sweepers and
 keeps the breaker O(1) per call.
 
-The breaker deliberately stays in-process. A distributed breaker (e.g. Redis-
-backed sliding window) is on the roadmap; for a single-pod deployment the
-in-process variant is sufficient and far simpler to reason about. When the
-gateway is horizontally scaled, each pod's breaker independently observes its
-own traffic — which is actually desirable: a pod whose connection to a
-provider is degraded should open *its* breaker without affecting healthy pods.
+### Two breaker backends
+
+`Settings.breaker_backend` selects between:
+
+- `in_process` (default) — one `CircuitBreaker` instance per `(provider, model)`
+  per pod. Hermetic, dependency-free, what unit tests exercise.
+- `redis` — `RedisBreakerClient` against the configured `redis_url`. Two Lua
+  scripts under `packages/router/pulseroute_router/lua/`
+  (`cb_record_and_check.lua`, `cb_allow.lua`) do the rolling-window event
+  bookkeeping and the state transitions atomically server-side. One round
+  trip per check.
+
+Why two backends. With a single pod the in-process variant is sufficient and
+trivially testable. When the gateway scales horizontally each pod sees only
+its own slice of upstream traffic, so a faulty model can stay live longer
+than necessary because no single pod exceeds the rolling-window threshold on
+its own. The Redis backend pools events across pods so the predicate is
+evaluated against the global error rate.
+
+Redis keys (one set per `(provider, model)` pair):
+
+| Key | Type | Contents |
+|---|---|---|
+| `cb:{provider}:{model}:events` | sorted set | one member per event, score = ts |
+| `cb:{provider}:{model}:events:seq` | string | monotone counter for member disambiguation |
+| `cb:{provider}:{model}:state` | string | `closed` \| `open` \| `half_open` |
+| `cb:{provider}:{model}:opened_at` | string | ts when state moved to `open` |
+
+Trade-offs. Redis becomes a SPOF for the breaker. The client falls back to
+"allow" (degrade-CLOSED) on any Redis exception so a Redis outage does not
+blackhole traffic; the caller is responsible for emitting a structured
+`redis_breaker_degraded` event. For applications where false-negative-OPEN
+is worse than false-positive-OPEN, set
+`RedisBreakerClient.degrade_open_on_error=True` to flip the polarity.
+
+Cross-pod agreement is verified by `tests/integration/test_distributed_breaker.py`,
+which spins up two `RedisBreakerClient` instances against the same fakeredis
+server and asserts that under 50 randomly interleaved (success|failure) event
+sequences both clients observe the same state at every checkpoint.
 
 ## ClickHouse schema rationale
 

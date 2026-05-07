@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     circuit_breaker_min_requests: int = 20
     circuit_breaker_error_rate: float = 0.5
     circuit_breaker_half_open_after_s: int = 30
+    # ``in_process`` keeps each pod's breaker local (legacy behaviour, hermetic
+    # CI). ``redis`` shares state across pods via Lua scripts in
+    # ``packages/router/pulseroute_router/lua``. The redis backend requires a
+    # reachable Redis at ``redis_url``.
+    breaker_backend: str = Field("in_process", pattern="^(in_process|redis)$")
 
     use_fake_provider: bool = False
 
