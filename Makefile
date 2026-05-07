@@ -1,4 +1,4 @@
-.PHONY: install dev migrate seed test test-cov lint typecheck eval bench bench-live bench-eval up down clean
+.PHONY: install dev migrate seed test test-cov lint typecheck eval bench bench-live bench-eval bench-cache-fill bench-regress up down clean
 
 REQUESTS ?= 10000
 
@@ -42,6 +42,22 @@ bench:
 
 bench-live:
 	bash scripts/bench.sh
+
+# Cache-fill curve. 50000 unique prompts; expected hit rate is 0% across
+# every window. A spike means a normalisation or embedding collision bug.
+CACHE_FILL_REQUESTS ?= 50000
+CACHE_FILL_WINDOW ?= 1000
+bench-cache-fill:
+	python bench/cache_fill_curve.py --requests $(CACHE_FILL_REQUESTS) --window $(CACHE_FILL_WINDOW)
+
+# Compares two bench-result JSONs and exits non-zero if any tracked metric
+# drifts more than 30%. CI runs this with a small fresh sample against a
+# committed small-scale baseline.
+BENCH_BASELINE ?= bench/results/baseline_1k.json
+BENCH_FRESH ?= bench/results/latest.json
+BENCH_THRESHOLD ?= 0.30
+bench-regress:
+	python bench/regress.py $(BENCH_BASELINE) $(BENCH_FRESH) --threshold $(BENCH_THRESHOLD)
 
 # Re-run the golden suite against every wired fake model and refresh the
 # committed baseline + a timestamped run artifact under eval/runs/.

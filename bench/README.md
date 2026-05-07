@@ -107,3 +107,66 @@ JSON: `bench/results/<ISO8601>.json` with keys `meta`, `summary.latency_ms`,
 `summary.cache`, `summary.route_reasons`, `summary.errors_per_upstream`,
 `summary.cost`. The README's "Performance" section quotes from the latest
 artifact in this directory.
+
+## Scaling limit
+
+`bench.py` runs the full gateway in-process over `fakeredis`. The semantic
+cache lookup is **O(N)** in stored vectors per request (per the docstring in
+`packages/cache/pulseroute_cache/semantic.py`): a full `HGETALL` plus a
+Python cosine scan. With 30 % duplicate ratio the corpus grows linearly with
+the request count, so the bench's wall-clock cost is roughly **O(N²/2)**.
+
+Practical ceiling on a single core: **~10–15k requests** before the run is
+slower than is useful (a 30k run on an M-series Mac does not finish in a
+half-hour). To exercise larger scales, swap the in-process scan for the
+RediSearch HNSW path documented in `packages/cache/pulseroute_cache/semantic.py` —
+the harness API does not change.
+
+## Cache-fill curve
+
+`bench/cache_fill_curve.py` is a separate harness focused on the **false
+positive** axis. It replays N sequential **unique** prompts through the
+gateway and records the per-window hit rate. Because every prompt is
+unique by construction, the expected hit rate is 0 % across every window.
+A non-zero spike means the prompt-fingerprint normaliser collided two
+different prompts onto the same key, or the embedder produced a
+near-identical vector for two semantically distinct prompts at the
+configured 0.97 cosine threshold.
+
+```bash
+make bench-cache-fill                                    # default 50000
+python bench/cache_fill_curve.py --requests 2000 --window 200
+```
+
+Output is `bench/results/cache_fill_curve.json` plus a tiny ASCII chart on
+stdout. The same scaling caveat applies — the cache fill harness inherits
+the O(N) lookup, so production validation should run with HNSW or against
+a smaller `--requests` budget.
+
+## Bench regression gate
+
+`bench/regress.py` compares two bench-result JSONs and exits non-zero when
+any tracked metric drifts beyond a threshold (default 30 %).
+
+```bash
+make bench-regress \
+  BENCH_BASELINE=bench/results/baseline_1k.json \
+  BENCH_FRESH=bench/results/<latest>.json
+```
+
+Tracked metrics:
+
+| metric | direction | reason |
+|---|---|---|
+| `latency_ms.p50_ms` | higher_is_worse | catastrophic latency regressions |
+| `latency_ms.p95_ms` | higher_is_worse | tail-latency regressions |
+| `latency_ms.p99_ms` | higher_is_worse | tail-latency regressions |
+| `cache.hit_rate_overall` | lower_is_worse | cache stops hitting at all |
+| `cache.hit_rate_on_dups` | lower_is_worse | duplicate path stopped working |
+| `cost.savings_pct` | lower_is_worse | routing/cache stopped saving cost |
+
+CI runs a 1000-request fresh bench against `bench/results/baseline_1k.json`
+on every push (job `bench-regress`). The 30 % threshold is wide on
+purpose: GitHub Actions runners have noisy latency tails. A genuine
+regression (cache hit rate collapsed, P95 doubled) clears the threshold
+immediately.

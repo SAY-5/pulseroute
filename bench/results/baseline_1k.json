@@ -1,0 +1,61 @@
+{
+  "meta": {
+    "timestamp": "2026-05-07 20:04:23Z",
+    "n_requests": 1000,
+    "seed": 42,
+    "workload_mix": {
+      "short": 0.7,
+      "medium": 0.25,
+      "long": 0.05
+    },
+    "duplicate_ratio": 0.3,
+    "tenant_costcap_share": 0.05,
+    "pinned_model": "fake-large",
+    "flip_at_request": 100,
+    "concurrency": 1
+  },
+  "summary": {
+    "n_requests": 1000,
+    "n_ok": 1000,
+    "latency_ms": {
+      "p50_ms": 9.9693,
+      "p95_ms": 24.7253,
+      "p99_ms": 35.1085,
+      "p999_ms": 58.2497,
+      "max_ms": 62.571,
+      "mean_ms": 10.9231
+    },
+    "cache": {
+      "hit_rate_overall": 0.382,
+      "hit_rate_on_dups": 0.946667,
+      "hit_rate_on_uniques": 0.14,
+      "n_dups": 300,
+      "n_uniques": 700
+    },
+    "route_reasons": {
+      "cost_capped": 40,
+      "quality_first": 578,
+      "cache_hit": 382
+    },
+    "errors_per_upstream": {},
+    "cost": {
+      "routed_usd": 0.014593,
+      "pinned_usd": 0.048883,
+      "savings_pct": 70.1471
+    },
+    "hdr_gateway_added_us": {
+      "p50_us": 7808,
+      "p95_us": 22016,
+      "p99_us": 27136,
+      "p999_us": 37888,
+      "n": 1000
+    },
+    "hdr_cache_lookup_us": {
+      "p50_us": 7808,
+      "p95_us": 22016,
+      "p99_us": 27136,
+      "p999_us": 37888,
+      "n": 1000
+    }
+  }
+}

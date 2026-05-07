@@ -70,12 +70,12 @@ suite or scoring, regenerate with `make bench-eval` and copy the row(s) here.
 `make bench` replays a deterministic 10k-request synthetic workload through
 the in-process gateway (FakeProvider, fakeredis) and writes the artifact to
 `bench/results/<timestamp>.json`. Numbers below are from
-`bench/results/20260506_000439Z.json` on an M-series Mac.
+`bench/results/run_10k_20260507T211654Z.json` on an M-series Mac.
 
 | metric | value |
 |---|---|
-| Gateway-added latency (HDR, us) — P50 / P95 / P99 / P999 | 48,128 / 143,360 / 217,088 / 225,280 |
-| Cache lookup latency (HDR, us) — P50 / P95 / P99 / P999 | 48,128 / 143,360 / 217,088 / 225,280 |
+| Gateway-added latency (HDR, us) — P50 / P95 / P99 / P999 | 67,584 / 200,704 / 208,896 / 225,280 |
+| Cache lookup latency (HDR, us) — P50 / P95 / P99 / P999 | 67,584 / 200,704 / 208,896 / 225,280 |
 | Cache hit rate — overall / dups / uniques | 39.8% / 93.2% / 16.9% |
 | Routing decisions: `quality_first` / `cache_hit` / `cost_capped` | 56.1% / 39.8% / 4.1% |
 | Cost — routed vs pinned `fake-large` | $0.124 vs $0.514 |
@@ -87,18 +87,52 @@ Production traffic with lower duplication would see less savings; the
 30% ratio is realistic for autocomplete or template-driven workloads but
 not for free-form chat. See `bench/README.md` for methodology.
 
-The HDR resolution makes the previous "51 ms gateway-added P50, didn't
-hit the 120 ms design target" datum legible: the gateway-added and
-cache-lookup HDR percentiles coincide (P50 48,128 us, P95 143,360 us).
-That isn't a coincidence — it confirms the gateway-added latency is
-dominated by the O(N) cache scan in the in-process `SemanticCache` over
-fakeredis (per the docstring in
-`packages/cache/pulseroute_cache/semantic.py`). The remainder of the
-gateway hot path (auth, routing, cost accounting) accounts for the
-sub-millisecond residual that the previous Prometheus histogram's 25 ms
-buckets hid entirely. Production deployments swap the linear scan for
+The HDR resolution shows the gateway-added and cache-lookup HDR
+percentiles coincide (P50 67,584 us, P95 200,704 us). That isn't a
+coincidence — it confirms the gateway-added latency is dominated by the
+O(N) cache scan in the in-process `SemanticCache` over fakeredis (per
+the docstring in `packages/cache/pulseroute_cache/semantic.py`). The
+remainder of the gateway hot path (auth, routing, cost accounting) is
+sub-millisecond. Production deployments swap the linear scan for
 RediSearch HNSW; the cache-free wrap latency reported by
 `scripts/bench_asgi.py` stays at ~5 ms P95.
+
+**Bench scaling.** The harness's O(N) cache scan plus 30 % duplicate
+ratio give the bench a ~O(N²/2) wall-clock cost. The practical ceiling
+on a single core is ~10–15k requests; the 100k target on the roadmap
+requires the HNSW path (the `SemanticCache` interface stays the same).
+See `bench/README.md` §scaling-limit.
+
+### Cache-fill curve
+
+`bench/cache_fill_curve.py` replays N **unique** prompts and records the
+per-window hit rate. Every prompt is unique by construction so the
+expected hit rate is 0 % across every window — a non-zero spike means
+the prompt-fingerprint normaliser collided two distinct prompts onto the
+same key, or the embedder produced a near-identical vector for two
+semantically distinct prompts at the configured 0.97 cosine threshold.
+Latest 2000-prompt run (`bench/results/cache_fill_curve.json`):
+
+| window | range | hits | rate |
+|---|---|---|---|
+| 0 | 0–199 | 0 | 0.0000 |
+| 1 | 200–399 | 0 | 0.0000 |
+| ... | ... | 0 | 0.0000 |
+| 9 | 1800–1999 | 0 | 0.0000 |
+
+`hit_rate_overall = 0.0000`, `max_window_hit_rate = 0.0000`. The
+`HashEmbedder` token-bag projection is collision-free for these prompts
+at this threshold. The 50000-prompt target on the roadmap will become
+feasible once the HNSW path lands.
+
+### Bench regression gate
+
+`make bench-regress` compares a fresh bench artifact against a committed
+small-scale baseline (`bench/results/baseline_1k.json`) and exits
+non-zero if any tracked metric drifts more than 30 %. CI runs this at
+1000 requests on every push (job `bench-regress`); local re-runs use
+the same harness at any scale up to the practical ceiling described
+above.
 
 ## Quickstart
 
