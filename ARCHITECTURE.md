@@ -176,17 +176,41 @@ idempotent on `(suite_id, model, run_started_at)`.
 
 ## Streaming + partial failures
 
+### SSE error-event protocol
+
 SSE streaming uses OpenAI's exact event shape so existing clients work
-unchanged. If the upstream disconnects mid-stream the gateway emits one
-synthetic chunk and a `[DONE]` terminator:
+unchanged. If the upstream disconnects mid-stream
+(`httpx.ReadError` / `httpx.ConnectError` / `httpx.RemoteProtocolError`)
+the gateway emits the partial-token chunks it already produced, then a
+single error chunk, then the terminal `[DONE]`:
 
 ```
-data: {"choices": [], "error": {"code": "upstream_disconnected", "retryable": true}}
+data: {"choices": [{"delta": {"content": "tok0"}, ...}]}
+data: {"choices": [{"delta": {"content": "tok1"}, ...}]}
+data: {"id": "chatcmpl-...", "object": "chat.completion.chunk",
+       "model": "...", "choices": [],
+       "error": {"code": "upstream_disconnected", "retryable": true,
+                 "request_id": "<uuid>", "message": "..."}}
 data: [DONE]
 ```
 
-This way clients that look for `[DONE]` continue to terminate cleanly while
-clients that inspect chunks see the structured error.
+The error chunk carries `request_id` so client-side support tickets and
+gateway-side traces stitch together. `retryable: true` tells the client the
+disconnect was a transport-layer issue, not an authoritative refusal.
+
+### Persistence guarantee
+
+Whatever tokens the gateway already emitted are persisted to the
+`request_log` sink **before** the error chunk hits the wire. The row carries
+`error_code='upstream_disconnected'` and the partial completion text. This
+order matters: a client-side timeout cannot race the writer, so the
+post-mortem question "what did the user see before the disconnect?" always
+has an authoritative answer in ClickHouse.
+
+The sink interface is intentionally tiny — one async method
+`record(row: dict)`. Production wires `HttpClickHouseClient`; tests
+monkey-patch a list-backed stub. See `tests/chaos/test_sse_disconnect.py`
+for the contract.
 
 ## Drift detection — statistical power
 

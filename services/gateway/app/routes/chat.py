@@ -6,7 +6,6 @@ Non-streaming returns OpenAI's exact JSON shape plus a non-OpenAI
 
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -134,8 +133,15 @@ async def chat_completions(
     if body.stream:
         gateway_added = time.perf_counter() - gateway_started
         record_gateway_added(gateway_added)
+        request_id = getattr(request.state, "request_id", None)
         return StreamingResponse(
-            _sse_stream(provider, body_for_call, decision, tenant_ctx.tenant_id),
+            _sse_stream(
+                provider,
+                body_for_call,
+                decision,
+                tenant_ctx.tenant_id,
+                request_id=request_id,
+            ),
             media_type="text/event-stream",
         )
 
@@ -235,50 +241,25 @@ async def _sse_stream(
     body: ChatCompletionRequest,
     decision,
     tenant_id: str,
+    request_id: str | None = None,
 ) -> AsyncIterator[bytes]:
-    completion_id = f"chatcmpl-{uuid.uuid4().hex}"
-    created = int(time.time())
-    try:
-        async for delta in provider.stream(body):
-            chunk = {
-                "id": completion_id,
-                "object": "chat.completion.chunk",
-                "created": created,
-                "model": decision.chosen_model,
-                "choices": [{"index": 0, "delta": {"content": delta}, "finish_reason": None}],
-            }
-            yield f"data: {json.dumps(chunk)}\n\n".encode()
-    except Exception as exc:
-        PROVIDER_ERRORS.labels(
-            provider=decision.chosen_provider.value,
-            model=decision.chosen_model,
-            code="stream_disconnect",
-        ).inc()
-        err_chunk = {
-            "id": completion_id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": decision.chosen_model,
-            "choices": [],
-            "error": {
-                "code": "upstream_disconnected",
-                "message": str(exc),
-                "retryable": True,
-            },
-        }
-        yield f"data: {json.dumps(err_chunk)}\n\n".encode()
-        yield b"data: [DONE]\n\n"
-        return
+    """Thin wrapper around :func:`pulseroute_gateway.streaming.sse_stream`.
 
-    final_chunk = {
-        "id": completion_id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": decision.chosen_model,
-        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-    }
-    yield f"data: {json.dumps(final_chunk)}\n\n".encode()
-    yield b"data: [DONE]\n\n"
+    Increments the ``stream_disconnect`` error metric on mid-stream failures
+    by sniffing the emitted bytes for the ``upstream_disconnected`` code.
+    The SSE protocol + persistence live in ``streaming.py``."""
+    from pulseroute_gateway.streaming import sse_stream as _sse
+
+    saw_error = False
+    async for chunk in _sse(provider, body, decision, tenant_id, request_id=request_id):
+        if not saw_error and b'"upstream_disconnected"' in chunk:
+            saw_error = True
+            PROVIDER_ERRORS.labels(
+                provider=decision.chosen_provider.value,
+                model=decision.chosen_model,
+                code="stream_disconnect",
+            ).inc()
+        yield chunk
 
 
 @router.post("/embeddings")
