@@ -18,7 +18,7 @@ test:
 	pytest tests/unit -x
 
 test-cov:
-	pytest tests/unit --cov --cov-report=term-missing --cov-fail-under=85
+	pytest tests/unit --cov --cov-report=term-missing --cov-fail-under=90
 
 test-integration:
 	RUN_INTEGRATION=1 pytest tests/integration
